@@ -1,0 +1,192 @@
+---
+title: "Text as Data Homework 3"
+author: "Vanessa (Ziwei) Xu and zx657"
+date: '2022-04-27'
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+------
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# clear global environment
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r echo=FALSE}
+# import libraries
+library(dplyr)
+library(caret)
+library(pbapply)
+library(stylest)
+library(ggplot2)
+library(stringr)
+library(quanteda)
+library(readtext)
+library(randomForest)
+library(mlbench)
+library(factoextra) 
+library(gutenbergr)
+library(quanteda.corpora)
+library(quanteda.textmodels)
+library(quanteda.textstats)
+library(quanteda.textplots)
+libraries <- c("topicmodels", "dplyr", "stm", "quanteda")
+lapply(libraries, require, character.only = T)
+```
+
+## Q1a
+
+Since the corpus of text is very large and my boss needs the model as soon as possible, I would choose to use variational inference method as it produces results very quickly compared to the other two LDA methods. This is because variational inference is simply simplifying the original problem and make an approximation instead. 
+
+
+## Q1b
+
+By changing the values of alpha (prior), we have three approaches in selecting the number of topics, k,  for the model. Setting a high alpha, alpha > 1, multiple topics will be selected. Setting a low alpha, alpha < 1, typically one topic (or only a few) is selected in each document. Setting a uniform alpha, alpha = 1, some ducoments might have one topic and other will have multiple topics. 
+
+## Q1c (i)
+
+The hyperparameter to cause very sparse topics would be a very small alpha (prior). 
+
+## Q1c (ii)
+
+A large prior on beta, eta, would be the cause of a flat topic-word distribution, where each topic assigns a similar probability to each word within the topic. 
+
+## Q1d
+
+Having full uncertainty estimates around all parameters and without worrying runtime, EM would be the fitting method I would select because both Gibbs and Variational inference are approximations of EM. 
+
+
+## Q1e
+
+Words in the document are not independent of each other after conditioning on the topic θi because they are from the same distribution beta. 
+
+p(w|θ,β) = ∑p(w|z,β)p(z|θ).
+
+## Q2a
+
+```{r echo=TRUE}
+# load the csv file first
+path <- "/Users/vanessaxu/Desktop/school/1015/homework/vaccination_all_tweets.csv"
+vac <- read.csv(path)
+View(vac)
+Summary(vac)
+# subset data
+vac$date2 <- as.Date(vac$date)
+subvac <- vac[which(vac$date2 <= '2021-04-30' & vac$date2 >= '2021-01-01'),]
+subvac <- subvac[grepl('PfizerBioNTech', subvac$hashtags) | grepl('Covaxin', subvac$hashtags),]
+# plot tweets
+subvac$Pfizer <- ifelse(grepl('PfizerBioNTech', subvac$hashtags),1,0)
+subvac$Covaxin <- ifelse(grepl('Covaxin', subvac$hashtags),1,0)
+View(subvac)
+subvac_group <- subvac %>% group_by(date2) %>%
+                            summarise(total_Pfizer = sum(Pfizer),
+                              total_Covaxin = sum(Covaxin),
+                              .groups = 'drop')
+View(subvac_group)
+matplot(subvac_group$date2, cbind(subvac_group$total_Pfizer, subvac_group$total_Covaxin), type="l", col=c("blue","pink"), lty=c(1,1))
+```
+The blue line is count of tweets mentioning PfizerBioNTech and pink line mentioning Covaxin.
+
+## Q2b
+
+I decide not to remove rare terms in this application after trying to do so (Implementation code commented out in Q2c below). After implementation, I found that a majority of words are deleted even only using a threshold as small as 0.00011 -- trimming from 19,012 features (99.94% sparse) to 4,478 features (99.80% sparse). This doesn't seem to have any effect on getting rid of irrelevant information since tweets are already sparse and most information are not repeated throughout tweets. 
+
+## Q2c
+
+```{r echo=TRUE}
+# Remove non ASCII characters
+subvac$text <- stringi::stri_trans_general(subvac$text, "latin-ascii")
+# Removes solitary letters
+subvac$text <- gsub(" [A-z] ", " ", subvac$text)
+
+vac_data <- textProcessor(subvac$text, metadata = subvac,
+                          lowercase = TRUE, removestopwords = TRUE, removenumbers = TRUE,
+                          removepunctuation = TRUE, stem = FALSE)
+vac_data
+# Create DFM to delete rare words
+# vac_dfm <-dfm(subvac$text, stem = F, remove_punct = T, tolower = T, remove_numbers = TRUE, remove = c(stopwords("english")))
+#vac_dfm <- dfm_trim(vac_dfm, min_docfreq = 0.00011, docfreq_type = "prop")
+```
+Pre-processing choices used are quite extensive, including removing non-ASCII characters, removing solitary letters, removing punctuation, removing numbers, removing stopwords, and converting to lower case. I also removed rare terms which was explained above in Q2b. These choices are made because I want to keep only relevant information to fit a topic model without getting confused by irrelevant information as much as possible. 
+
+
+## Q2d
+
+```{r echo=TRUE}
+vac_data <- prepDocuments(vac_data$documents, vac_data$vocab, 
+                          meta = subvac, lower.thresh = 30)
+vac_data$meta$date2 <- as.numeric(vac_data$meta$date2)
+#system.time(
+#  vac_stm <- stm(vac_data$documents, vac_data$vocab, 10, prevalence = ~Pfizer + s(date2), 
+#                 data = vac_data$meta))
+# saveRDS(vac_stm, "vac_stm.rds")
+vac_stm <- readRDS("vac_stm.rds")
+cat('Number of iteration it took to converge:',vac_stm$convergence$its)
+```
+
+## Q2e
+
+```{r echo=TRUE}
+# A summary plot of the topics that ranks them by their average proportion in the corpus
+plot(vac_stm, type = "summary")
+```
+5 topics that occur in the highest proportion of documents: 
+Top 1: pfizerbiotech, dose, got
+Top 2: covaxin, covidvaccine, khameneis
+Top 3: covishield, bharatbiotech, ocgn
+Top 4: will, now, one
+Top 5: vaccine, india, vaccines
+
+## Q2f
+
+```{r echo=TRUE}
+# system.time(
+#   vac_stm2 <- stm(vac_data$documents, vac_data$vocab, 20, prevalence = ~Pfizer + s(date2), 
+#                  data = vac_data$meta))
+# saveRDS(vac_stm2, "vac_stm2.rds")
+vac_stm2 <- readRDS("vac_stm2.rds")
+cat('Number of iteration it took to converge:',vac_stm2$convergence$its)
+# A summary plot of the topics that ranks them by their average proportion in the corpus
+plot(vac_stm2, type = "summary")
+
+```
+Topics from these two models are different but most topics stay the same. I like the second model better as I do believe that more information is provided and each topic does seem to perform better such as pfizerbiotech and pfizer are together in topic 20 instead of separated in the first model. 
+
+## Q2g
+
+```{r echo=TRUE}
+prep <- estimateEffect(1:20 ~Pfizer + s(date2), vac_stm2, meta = vac_data$meta)
+# content variation with vaccines
+plot(prep, "Pfizer", model = vac_stm2, topics = c(4),
+     method = "difference", cov.value1 = "Covaxin", cov.value2 = "PfizerBioNTech")
+# Plots the distribution of topics over time
+plot(prep, "date2", vac_stm2, topics = c(4), 
+     method = "continuous", xaxt = "n", xlab = "Date")
+```
+I decided to choose topic 4, which have both pfizerbiotech and pfizer. The covariate level of covaxin compared to pfizerbiontech is about -0.231. And prevalence changed over time as more people talk about it at the beginning and drops over time. This is expected as Pfizer was rather popular when the vaccine first came out and fewer people would talk or tweet about it later on. 
+
+## Q3a
+
+Out of two pretrained word embeddings models, Word2Vec and GloVe, I would choose word2vec with skipgram which takes a word for input and a list of words for output. In order to improve a dictionary by expanding its word collection, using word2vec would find word embeddings of those that already exist in the dictionary. 
+
+## Q3b
+
+The accuracy measure of recall would best indicate whether I’ve overcome the non-exhaustive dictionary problem. Number of True Positive / Number of all positive (False Negative + True Positive) would be a great measure on whether we've embedded all relevant words into the dictionary.
+
+## Q3c
+
+SVD could be used in order to reduce the vocabulary size of a bag-of-words document representation. Using SVD would put words in similar contexts together and there achive the result of reducing the size of a bag-of-words. This is achieved by storing approximate context with matrix decomposition. 
+
+## Q3d
+
+I would train new embeddings using existing, off-the-shelf embeddings. This is because this is significantly cheaper to train by transferring the learnings of one task to another. On the other hand, learning word embeddings from scratch is a challenging problem due to the sparsity of training data and the large number of trainable parameters.
+
+## Q3e
+
+As useful and effective as they are, there are also potential ethical issues of using pretrained word embeddings in my classifier. For example, word embedding learn societal biases. For example, African American names are ore similar to unpleasant words than European American names, and male names are more associated with career words and female names more associated with house work terms. 
+

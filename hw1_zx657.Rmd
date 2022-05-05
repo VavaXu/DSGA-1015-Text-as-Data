@@ -1,0 +1,397 @@
+---
+title: "Text as Data HW 1"
+author: "Vanessa (Ziwei) Xu and zx657"
+date: "2/21/2022"
+output: pdf_document
+---
+
+------
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=TRUE}
+# import libraries
+library(dplyr)
+library(pbapply)
+library(stylest)
+library(ggplot2)
+library(stringr)
+library(quanteda)
+library(gutenbergr)
+library(quanteda.corpora)
+library(quanteda.textstats)
+library(quanteda.textplots)
+```
+
+## Q1a
+
+```{r echo=TRUE}
+# your code to compute the answer
+# ** Make sure your markdown document shows both CODE and OUTPUT **
+speeches <- corpus_subset(data_corpus_inaugural, President == "Reagan") # punctuation included
+tokenized_speeches <- tokens(speeches, remove_punct = TRUE) # punctuation excluded
+# token <- tokens(text, remove_punct = TRUE)
+TTR <- function(text) {
+  TTR <- ntype(text) / ntoken(text)
+  return(TTR)
+}
+
+cat("The type-token ratio (TTR) of the inaugural address given by Ronald Reagan in 1981 is", TTR(tokenized_speeches[1]), "\n")
+cat("The type-token ratio (TTR) of the inaugural address given by Ronald Reagan in 1985 is", TTR(tokenized_speeches[2]))
+```
+TTR in 1981's speech given by Ronald Reagan is slightly higher than TTR in 1985, which means that a higher variety of unique words were used in 1981's speech compared to 1985's speech. 
+
+
+## Q1b
+
+```{r echo=TRUE}
+# your code 
+RR_dfm <- dfm(tokenized_speeches, tolower = FALSE) # tolower is true default
+textstat_simil(RR_dfm, method = "cosine")
+```
+The cosine similarity between the two documents is 0.959, which indicates high similarity.
+
+
+## Q2a - Stemming the words
+
+(i) Stemming the words should lower the TTR of each document because stemming reduces the number of unique words, which is the number of types. 
+And stemming should increase the similarity of the two documents due to a decrease in variety of unique words used. 
+
+```{r echo=TRUE}
+# Stemming the words
+stemmed_speech <- tokens_wordstem(tokenized_speeches)  # stemmed
+RR_dfm2a <- dfm_wordstem(RR_dfm) # matrix form
+# ii: redo 1a
+print("TTR of documents:")
+TTR(stemmed_speech)
+# iii: redo 1b
+print("cosine similarity of two documents:")
+textstat_simil(RR_dfm2a, method = "cosine")
+```
+
+## Q2b - Removing stop words
+
+(i) Removing stop words should increase the TTR of each document a lot more than stemming should because removal of stop words drastically reduces the number of tokens compared to types, which does not decrease as much as tokens do.
+And removing stop words should reduce the similarity of the two documents due to a decrease in the number of repeated words that are very often used in both documents.
+
+```{r echo=TRUE}
+# Removing stop words
+nostop_speech <- tokens_remove(tokenized_speeches, pattern = stopwords("english")) # stemmed
+RR_dfm2b <- dfm(RR_dfm, tolower = FALSE, remove = stopwords("english")) # matrix form
+
+# ii: redo 1a
+print("TTR of documents:")
+TTR(nostop_speech)
+# iii: redo 1b
+print("cosine similarity of two documents:")
+textstat_simil(RR_dfm2b, method = "cosine")
+```
+
+## Q2c - Converting all words to lowercase
+
+(i) Converting all words to lowercase should slightly decrease the TTR of each document because it slightly decreases the variety of unique words used. 
+And converting to lowercase should slightly increase the similarity of the two documents because all forms (upper or lower case) of the same words are grouped together and decreases the chance of having more types than they should.
+
+```{r echo=TRUE}
+# Converting all words to lowercase
+lower_speech <- tokens_tolower(tokenized_speeches, keep_acronyms = FALSE) # stemmed
+RR_dfm2c <- dfm_tolower(RR_dfm, keep_acronyms = FALSE) # matrix form
+# ii: redo 1a
+print("TTR of documents:")
+TTR(lower_speech)
+# iii: redo 1b
+print("cosine similarity of two documents:")
+textstat_simil(RR_dfm2c, method = "cosine")
+```
+
+## Q2d 
+
+```{r echo=TRUE}
+# your code 
+dfm_tfidf(RR_dfm)
+```
+
+tf-idf weighting does not make much sense here because most of the words occur in both documents. This way, idf is pretty low and this term is not as informative. 
+
+
+## Q3a
+
+```{r echo=TRUE}
+# your code 
+t1 = "Nasa Mars rover: Perseverance robot all set for big test."
+t2 = "NASA Lands Its Perseverance Rover on Mars."
+tokenized_t <- tokens(c(t1,t2), remove_punct = TRUE) 
+tokenized_t <- tokens_tolower(tokenized_t, keep_acronyms = FALSE) # pre-processed tokens
+t_dfm <- dfm(tokenized_t) # pre-processed dfm
+sqrt(sum((t_dfm[1,] - t_dfm[2,])^2)) # Euclidean distance
+```
+I removed punctuation and changed to lower case when pre-processing text because I believe NASA and Nasa mean the same thing and punctuation removal does not change the meaning of the text under this context. However, I don't see why stop words and stemming are required here. 
+The Euclidean distance is 3.
+
+## Q3b
+
+```{r echo=TRUE}
+# your code 
+sum(abs(t_dfm[1,] - t_dfm[2,]))
+```
+The Manhattan distance is 9.
+
+## Q3c
+
+```{r echo=TRUE}
+# your code 
+sum(t_dfm[1,] * t_dfm[2,]) / (sqrt(sum((t_dfm[1,])^2))*sqrt(sum((t_dfm[2,])^2)))
+```
+The cosine similarity is 0.478. 
+
+## Q3d
+
+The minimum number of operations required to convert "robot" to "rover" is 3, which includes:
+1. substitute "b" to "v"
+2. substitute "o" to "e"
+3. substitute "t" to "r"
+
+## Q4a & 4b
+
+```{r echo=TRUE}
+## Prepare data
+n <- gutenberg_authors[,]
+# list of authors
+author_list <- c("Poe, Edgar Allan", "Twain, Mark", "Shelley, Mary Wollstonecraft", "Doyle, Arthur Conan")
+# Here a list of the gutenberg_id associated with the books is given below
+book_list <- c(932,1064,1065,32037,74,76,86,91,84,6447,15238,18247,108,126,
+139,244)
+# Using the following command you can check the information associated with the first four novels for each author
+# The gutenberg_id above were obtained with the following command
+meta <- gutenberg_works(author == "Doyle, Arthur Conan") %>% slice(1:4)
+
+# Prepare data function
+# @param author_name: author’s name as it would appear in gutenberg
+# @param num_texts: numeric specifying number of texts to select
+# @param num_lines: num_lines specifying number of sentences to sample
+
+meta <- gutenberg_works(gutenberg_id == book_list)
+meta <- meta %>% mutate(author = unlist(str_split(author, ","))[1]%>% tolower(.))
+prepare_dt <- function(book_list, num_lines, removePunct = TRUE){
+  meta <- gutenberg_works(gutenberg_id == book_list)
+  meta <- meta %>% mutate(author = unlist(str_split(author, ","))[1]
+                          %>% tolower(.))
+  texts <- lapply(book_list, function(x) gutenberg_download(x, mirror="http://mirrors.xmission.com/gutenberg/") %>% select(text) %>% sample_n(500, replace=TRUE) %>% unlist() %>% paste(., collapse = " ") %>% str_replace_all(., "^ +| +$|( ) +", "\\1"))
+
+  # remove apostrophes
+  texts <- lapply(texts, function(x) gsub("‘|’", "", x))
+  if(removePunct) texts <- lapply(texts, function(x)
+    gsub("[^[:alpha:]]", " ", x))
+  # remove all non-alpha characters
+  output <- tibble(title = meta$title, author = meta$author, text =
+                     unlist(texts, recursive = FALSE))
+}
+
+# run function
+set.seed(1984L)
+texts_dt <- lapply(book_list, prepare_dt, num_lines = 500, removePunct = TRUE)
+texts_dt <- do.call(rbind, texts_dt)
+print(texts_dt$title)
+print(texts_dt$author)
+```
+
+## Q4c
+
+```{r echo=TRUE}
+# your code 
+filter <- corpus::text_filter(drop_punct = TRUE, drop_number = TRUE, drop = stopwords("english"))
+set.seed(1984L) 
+vocab_custom <- stylest_select_vocab(texts_dt$text, texts_dt$author, filter = filter, smooth = 1)
+vocab_custom$cutoff_pct_best
+mean(vocab_custom$miss_pct) 
+```
+
+90% (of term frequency) has the best prediction rate.
+The mean rate of incorrectly predicted speakers of held-out texts is 32.78%
+
+## Q4d
+
+```{r echo=TRUE}
+# your code 
+vocab_subset <- stylest_terms(texts_dt$text, texts_dt$author, vocab_custom$cutoff_pct_best, filter = filter)
+style_model <- stylest_fit(texts_dt$text, texts_dt$author, terms = vocab_subset, filter = filter)
+authors <- unique(texts_dt$author)
+term_usage <- style_model$rate
+lapply(authors, function(x) head(term_usage[x,][order(-term_usage[x,])])) %>% setNames(authors)
+```
+Some of the terms do make sense and some of them don't, such as "s" and "t".
+
+## Q4e
+
+```{r echo=TRUE}
+# your code 
+sort(term_usage["poe",]/term_usage["twain",], decreasing = TRUE)[1:5]
+```
+This means that Poe uses "soul" about 88 times more than Twain; Poe uses "thy" 74 times as Twain and so on. 
+
+## Q4f
+
+```{r echo=TRUE}
+# your code 
+new_text <- readRDS("mystery_excerpt.rds")
+pred <- stylest_predict(style_model, new_text)
+pred$predicted
+pred$log_probs
+```
+The most likely author to this new excerpt is Twain.
+
+## Q4g
+
+```{r echo=TRUE}
+# your code 
+collocations <- textstat_collocations(texts_dt$text, min_count = 5)
+print("10 collocations with the largest lambda value:")
+collocations[order(collocations$lambda, decreasing = TRUE),]$collocation[1:10]
+print("10 collocations with the largest count:")
+collocations[order(collocations$count, decreasing = TRUE),]$collocation[1:10]
+```
+
+## Q5a
+
+```{r echo=TRUE, error=TRUE}
+# your code 
+data(data_corpus_ungd2017, package = "quanteda.corpora")
+
+# Make snippets of 1 sentence each, then clean them
+snippetData <- snippets_make(data_corpus_ungd2017, nsentence = 1, minchar = 150, maxchar = 350)
+snippetData <- snippets_clean(snippetData)
+head(snippetData)
+```
+
+## Q5b
+
+```{r echo=TRUE, error=TRUE}
+# your code 
+testData <- sample_n(snippetData, 1000)
+snippetPairsMST <- pairs_regular_make(testData)
+pairs_regular_browse(snippetPairsMST)
+
+gold_questions <- pairs_gold_make(snippetPairsAll, n.pairs = 10)
+```
+
+Due to a failure to install sophistication package from my Mac with M1 chip, I used another computer to do this homework and run the code. However, I did the rest of my homework on my Mac so output for this question cannot be included. 
+
+## Q6
+
+```{r echo=TRUE}
+# your code
+
+text_gg <- gutenberg_download(64317, mirror="http://mirrors.xmission.com/gutenberg/") %>% select(text) %>% unlist() %>% paste(., collapse = " ") %>% str_replace_all(., "^ +| +$|( ) +", "\\1")
+# text_gg <- tokens(text_gg, remove_punct = TRUE)
+text_lw <- gutenberg_download(514, mirror="http://mirrors.xmission.com/gutenberg/") %>% select(text) %>% unlist() %>% paste(., collapse = " ") %>% str_replace_all(., "^ +| +$|( ) +", "\\1")
+# text_lw <- tokens(text_lw, remove_punct = TRUE)
+gglw_dfm <- dfm(tokens(c(text_gg, text_lw)), remove_punct = TRUE, tolower = TRUE, remove = stopwords("english"))
+gglw_dfm <- dfm_wordstem(gglw_dfm) # matrix form
+
+
+# Regression to check if slope is approx -1.0
+regression <- lm(log10(topfeatures(gglw_dfm, 100)) ~ log10(1:100))
+plot(log10(1:100), log10(topfeatures(gglw_dfm, 100)),
+     xlab = "log10(rank)", ylab = "log10(frequency)", main = "xxx") + abline(regression, col = "red")
+```
+I decided to download both texts with removal of punctuation and stop words, and I also applied stemming and changing to lower case only. This makes later calculations a lot easier and more efficient.
+
+## Q7
+
+```{r echo=TRUE}
+# your code 
+text_gglw <- tokens(c(text_gg,text_lw), remove_punct = TRUE)
+num_tokens <- sum(lengths(text_gglw))
+M <- nfeat(gglw_dfm)  # number of types
+k <- 44
+b <- log(M)/log(num_tokens) - log(k)/log(num_tokens)
+b
+```
+b is approximately 0.428 to 3 decimal places and I've removed punctuation as too much pre-processing results in weird tokens such as "f".
+
+## Q8
+
+```{r echo=TRUE}
+# your code 
+text_lw <- tokens(text_lw, remove_punct = TRUE)
+text_gg <- tokens(text_gg, remove_punct = TRUE)
+kwic_classlw <- kwic(text_lw, pattern = "class*", valuetype = "glob", window = 3)
+kwic_classgg <- kwic(text_gg, pattern = "class*", valuetype = "glob", window = 3)
+kwic_wealthlw <- kwic(text_lw, pattern = "wealth*", valuetype = "glob", window = 3)
+kwic_wealthgg <- kwic(text_gg, pattern = "wealth*", valuetype = "glob", window = 3)
+kwic_powerlw <- kwic(text_lw, pattern = "power*", valuetype = "glob", window = 3)
+kwic_powergg <- kwic(text_gg, pattern = "power*", valuetype = "glob", window = 3)
+kwic_elitlw <- kwic(text_lw, pattern = "elit*", valuetype = "glob", window = 3)
+kwic_elitgg <- kwic(text_gg, pattern = "elit*", valuetype = "glob", window = 3)
+kwic_classlw
+kwic_classgg
+kwic_wealthlw
+kwic_wealthgg
+kwic_powerlw
+kwic_powergg
+kwic_elitlw
+kwic_elitgg
+```
+
+A few keywords that I thought of was "class", "wealth", "power", and "elite". A difference of word choice can be told from the kwic command results. From my observations, the description of "power" is a lot more subtle in Little Women and a lot stronger and straightforward in The Great Gatsbby. Little Women also emphasizes on the power of women.
+
+## Q9a
+
+```{r echo=TRUE}
+# load data
+data("data_corpus_ukmanifestos")
+manifestos <- corpus_subset(data_corpus_ukmanifestos, Party == "Con")
+# tokenize by sentences
+sent_tokens <- unlist(tokens(manifestos, what = "sentence", include_docvars = TRUE))
+
+# extract year metadata
+yearnames <- list(unlist(names(sent_tokens)))
+yearnames <- lapply(yearnames[[1]], function(x){strsplit(x, "_")[[1]][3]})
+yearslist <- unlist(yearnames)
+# create tibble
+sentences_df <- tibble(text = sent_tokens, year = yearslist)
+# filter out non-sentences (only sentences that end in sentence punctuation
+sentences_df <- sentences_df[grepl( ("[\\.\\?\\!]$"), sentences_df$text), ]
+# create quanteda corpus object
+sent_corp <- corpus(sentences_df$text)
+docvars(sent_corp, field = "Year") <- sentences_df$year
+
+iters <- 10
+boot_flesch <- function(year_data){
+  N <- nrow(year_data)
+  bootstrap_sample <- corpus_sample(corpus(c(year_data$text)), size = N, replace = TRUE)
+  bootstrap_sample<- as.data.frame(as.matrix(bootstrap_sample))
+  readability_results <- textstat_readability(bootstrap_sample$V1, measure = "Flesch")
+  return(mean(readability_results$Flesch))
+}
+
+boot_flesch_by_year <- pblapply(unique(yearslist), function(x){
+  sub_data <- sentences_df %>% filter(year == x)
+  output_flesch <- lapply(1:iters, function(i) boot_flesch(sub_data))
+  return(unlist(output_flesch))
+})
+names(boot_flesch_by_year) <- unique(yearslist)
+View(boot_flesch_by_year)
+
+# compute mean and std.errors
+year_means <- lapply(boot_flesch_by_year, mean) %>% unname() %>% unlist()
+year_ses <- lapply(boot_flesch_by_year, sd) %>% unname() %>% unlist() # bootstrap standard error = sample standard deviation bootstrap distribution
+year_means
+year_ses
+```
+
+## Q9b
+
+```{r echo=TRUE}
+# your code 
+flesch_point <- sentences_df$text %>% textstat_readability(measure = "Flesch") %>% 
+  group_by(sentences_df$year) %>% 
+  summarise(mean_flesch = mean(Flesch)) %>% 
+  setNames(c("year", "mean")) %>% arrange(year) 
+
+flesch_point
+```
+There are slight deviations between bootstrapped and unbootstrapped estimates of FRE score over time.
+
