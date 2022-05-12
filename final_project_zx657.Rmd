@@ -1,0 +1,310 @@
+---
+title: "final_project_zx657"
+author: "Vanessa Xu"
+date: '2022-05-04'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# clear global environment
+rm(list = ls())
+```
+
+```{r echo=FALSE}
+# import libraries
+library(tidyr)
+library(dplyr)
+library(caret)
+library(pbapply)
+library(stylest)
+library(ggplot2)
+library(stringr)
+library(quanteda)
+library(readtext)
+library(randomForest)
+library(mlbench)
+library(factoextra) 
+library(gutenbergr)
+library(quanteda.corpora)
+library(quanteda.textmodels)
+library(quanteda.textstats)
+library(quanteda.textplots)
+library(topicmodels)
+library(stm)
+library(reshape2)
+```
+
+```{r loading text data}
+# loading text data from local directory
+path <- "/Users/vanessaxu/Desktop/school/1015/finalproject/country_reports"
+# create list of text file names including and excluding file path
+filenamesfull <- list.files(path, pattern="*.txt", full.names=TRUE)
+filenames <- list.files(path, pattern="*.txt") # length(filenames) -- 13692
+
+# generate text corpus from files
+reports <- corpus(readtext(filenamesfull))
+
+# extract year and country code from each file name using regular expression
+country <- unlist(regmatches(unlist(filenames), gregexpr("^[[:alpha:]]*", unlist(filenames))))
+year <- unlist(regmatches(unlist(filenames), regexpr("[[:digit:]]{4}", unlist(filenames))))
+
+# create a dataframe with columns of text, country, and year
+docvars(reports, field = c("country", "year")) <- data.frame(cbind(country, year))
+reports_df <- tibble(text = texts(reports), country = country, year = as.integer(year))
+
+# dim(reports_df) -- (13692, 3)
+# View(reports_df)
+```
+
+```{r manual input data check}
+# checking if any file doesn't start with a country code
+group_reports <- reports_df %>% group_by(country, year) %>% summarise(count_country = n(),
+                                                                      .groups = 'drop')
+# View(group_reports)
+```
+
+```{r classification validation data}
+# loading classification data from local directory
+csvpath <- "/Users/vanessaxu/Desktop/school/1015/finalproject/country_threshold.csv"
+class <- read.csv(csvpath) # dimension is (224 x 255)
+
+# detecting empty columns and columns with all NA
+empty_columns <- sapply(class, function(x) all(is.na(x) | x == "")) 
+class <- class[, !empty_columns] # dimension is now (224 x 34)
+# View(class)
+
+# convert the matrix form to a long table where columns are countrycode, year, and class
+class_df <- melt(data = class, id.vars = "country", 
+                 variable.name = "year", 
+                 value.name = "class")
+# delete "X" from all entries in the year column
+class_df$year<-gsub("X","",as.character(class_df$year)) # dimension is (7392 x 3)
+
+# drop rows with ".." as class
+class_df <- class_df[class_df$class != "..", ] # dimension is (6911 x 3)
+
+# dropping classification data after 2014 where no text data exists
+class_df <- subset(class_df, year < 2015) # dimension is (5791 x 3)
+
+# View(class_df)
+```
+
+```{r left join text data with validation data}
+# Analytical Classifications threshold exist starting from the year of 1987
+# dropping input text data before 1987
+reports_class <- subset(reports_df, year > 1986) # dimension is (10744 x 3)
+# View(reports_class)
+
+# left join text dataframe with validation classification values
+reports <- merge(x = reports_class, y = class_df, by = c("country", "year"), all.x = TRUE)
+# dim(reports) -- 10744 x 4
+# View(reports)
+
+# drop all rows with NA in validation column - make sure there is no missing value 
+reports <- reports %>% drop_na(class)
+
+# replace class "LM*" with "LM"
+reports[reports == "LM*"] <- "LM"
+
+# dim(reports) -- 10472 x 4
+# View(reports)
+```
+
+
+```{r text data distribution}
+# replace apostrophes
+reports$text <- gsub(pattern = "'", "", reports$text) 
+
+# have a look at the distribution of classes
+prop.table(table(reports$class))
+# frequency table
+table(reports$class)
+
+# group by year to seenumber of articles over time
+group_year <- reports %>% group_by(year) %>% summarise(count_year = n(),
+                                                       .groups = 'drop')
+
+# plot number of articles over time
+matplot(group_year$year, group_year$count_year, type="l", col=c("blue"), lty=c(1,1))
+
+# group by year and country to seenumber of articles over time
+group_y_c <- reports %>% group_by(country, year) %>% summarise(count = n(),
+                                                               .groups = 'drop')
+
+# plot number of articles over time
+matplot(group_y_c$year, group_y_c$count, type="l", col=c("blue"), lty=c(1,1))
+
+# average number of human rights articles published each year
+sum(group_year$count_year) / length(group_year$year)
+group_year$count_year
+```
+
+```{r model with min_docfreq set to 0.001}
+# set seed before splitting data and training model
+set.seed(1987L)
+# create a for loop for different training sizes
+for (train_size in c(0.5, 0.6, 0.7, 0.8, 0.9))
+{
+  prop_train <- train_size
+  # Save the indexes
+  ids <- 1:nrow(reports)
+  
+  ids_train <- sample(ids, ceiling(prop_train*length(ids)), replace = FALSE)
+  ids_test <- ids[-ids_train]
+  train_set <- reports[ids_train,]
+  test_set <- reports[ids_test,]
+
+  # tokenize, filter, and get dfm for both train and test set
+  # pre-processing choices: converting to lowercase, stemming, removing punctuation, 
+  # removing stopwords, removing numbers, and replacing apostrophes
+  tokenized_train <- tokens(train_set$text, remove_numbers=TRUE, remove_punct = TRUE) 
+  tokenized_train <- tokens_tolower(tokenized_train, keep_acronyms = FALSE) 
+  tokenized_train <- tokens_remove(tokenized_train, pattern = stopwords("english")) 
+  train_dfm <- dfm(tokenized_train)
+  train_dfm <- dfm_wordstem(train_dfm)
+  
+  tokenized_test <- tokens(test_set$text, remove_numbers=TRUE, remove_punct = TRUE) 
+  tokenized_test <- tokens_tolower(tokenized_test, keep_acronyms = FALSE) 
+  tokenized_test <- tokens_remove(tokenized_test, pattern = stopwords("english")) 
+  test_dfm <- dfm(tokenized_test)
+  test_dfm <- dfm_wordstem(test_dfm)
+  
+  # dim(train_dfm) -- 8378 x 296941
+  # head(test_dfm)
+  # head(train_dfm)
+  
+  # trim the sparse dfm by setting the minimum number of documents features occur to 0.1%
+  train_dfm <- dfm_trim(train_dfm, min_docfreq = 0.001, docfreq_type = "prop")
+  test_dfm <- dfm_trim(test_dfm, min_docfreq = 0.001, docfreq_type = "prop")
+  # dim(train_dfm) -- 8378 x 31098
+  
+  # convert dfm to dataframes
+  train_dfm_df <- convert(train_dfm, to = "data.frame")
+  test_dfm_df <- convert(test_dfm, to = "data.frame")
+  # View(train_dfm_df)
+  # View(test_dfm_df)
+  
+  # match test set dfm to train set dfm features
+  test_dfm <- dfm_match(test_dfm, features = featnames(train_dfm))
+
+  # train model on the training set using Laplace smoothing
+  nb_model <- textmodel_nb(train_dfm, train_set$class, smooth = 1, prior = "uniform")
+  # evaluate on test set
+  predicted_class <- predict(nb_model, newdata = test_dfm, force=TRUE) 
+  
+  predicted_class
+  table(predicted_class)
+  
+  # baseline
+  baseline_acc <- max(prop.table(table(test_set$class)))
+  table(test_set$class)
+  
+  # get confusion matrix
+  cmat <- table(test_set$class, predicted_class)
+  cmat
+  
+  # choose accuracy to be the evaluation metric here
+  nb_acc <- sum(diag(cmat))/sum(cmat) # accuracy = (TP + TN) / (TP + FP + TN + FN)
+  
+  # printing results
+  cat(
+    "training size: ", train_size, "\n",
+    "Baseline Accuracy: ", baseline_acc, "\n",
+    "Confusion matrix: ", cmat, "\n",
+    "Accuracy:",  nb_acc, "\n"
+  )
+}
+
+```
+
+```{r model with min_docfreq set to 0.0005}
+# create a for loop for different training sizes
+for (train_size in c(0.5, 0.6, 0.7, 0.8, 0.9))
+{
+  prop_train <- train_size
+  # Save the indexes
+  ids <- 1:nrow(reports)
+  
+  ids_train <- sample(ids, ceiling(prop_train*length(ids)), replace = FALSE)
+  ids_test <- ids[-ids_train]
+  train_set <- reports[ids_train,]
+  test_set <- reports[ids_test,]
+
+  # tokenize, filter, and get dfm for both train and test set
+  # pre-processing choices: converting to lowercase, stemming, removing punctuation, 
+  # removing stopwords, removing numbers, and replacing apostrophes
+  tokenized_train <- tokens(train_set$text, remove_numbers=TRUE, remove_punct = TRUE) 
+  tokenized_train <- tokens_tolower(tokenized_train, keep_acronyms = FALSE) 
+  tokenized_train <- tokens_remove(tokenized_train, pattern = stopwords("english")) 
+  train_dfm <- dfm(tokenized_train)
+  train_dfm <- dfm_wordstem(train_dfm)
+  
+  tokenized_test <- tokens(test_set$text, remove_numbers=TRUE, remove_punct = TRUE) 
+  tokenized_test <- tokens_tolower(tokenized_test, keep_acronyms = FALSE) 
+  tokenized_test <- tokens_remove(tokenized_test, pattern = stopwords("english")) 
+  test_dfm <- dfm(tokenized_test)
+  test_dfm <- dfm_wordstem(test_dfm)
+  
+  # dim(train_dfm) -- 8378 x 296941
+  # head(test_dfm)
+  # head(train_dfm)
+  
+  # trim the sparse dfm by setting the minimum number of documents features occur to 0.1%
+  train_dfm <- dfm_trim(train_dfm, min_docfreq = 0.0005, docfreq_type = "prop")
+  test_dfm <- dfm_trim(test_dfm, min_docfreq = 0.0005, docfreq_type = "prop")
+  # dim(train_dfm) -- 8378 x 31098
+  
+  # convert dfm to dataframes
+  train_dfm_df <- convert(train_dfm, to = "data.frame")
+  test_dfm_df <- convert(test_dfm, to = "data.frame")
+  # View(train_dfm_df)
+  # View(test_dfm_df)
+  
+  # match test set dfm to train set dfm features
+  test_dfm <- dfm_match(test_dfm, features = featnames(train_dfm))
+
+  # train model on the training set using Laplace smoothing
+  nb_model <- textmodel_nb(train_dfm, train_set$class, smooth = 1, prior = "uniform")
+  # evaluate on test set
+  predicted_class <- predict(nb_model, newdata = test_dfm, force=TRUE) 
+  
+  predicted_class
+  table(predicted_class)
+  
+  # baseline
+  baseline_acc <- max(prop.table(table(test_set$class)))
+  table(test_set$class)
+  
+  # get confusion matrix
+  cmat <- table(test_set$class, predicted_class)
+  cmat
+  
+  # choose accuracy to be the evaluation metric here
+  nb_acc <- sum(diag(cmat))/sum(cmat) # accuracy = (TP + TN) / (TP + FP + TN + FN)
+  
+  # printing results
+  cat(
+    "training size: ", train_size, "\n",
+    "Baseline Accuracy: ", baseline_acc, "\n",
+    "Confusion matrix: ", cmat, "\n",
+    "Accuracy:",  nb_acc, "\n"
+  )
+}
+
+```
+
+
+```{r plot results}
+training_size <- c(0.5, 0.6, 0.7, 0.8, 0.9)
+accuracy_nb1 <- c(0.8168449, 0.8006208, 0.8178924, 0.8099331, 0.8127985)
+accuracy_nb2 <- c(0.8168449, 0.824021, 0.8245782, 0.817574, 0.808978)
+
+# plot Naive Bayes results in comparison
+matplot(training_size , cbind(accuracy_nb1, accuracy_nb2), type="l", 
+        col=c("blue","pink"), lty=c(1,1))
+legend("topright", inset=.02, legend=c("min_docfreq = 0.001", "min_docfreq = 0.0005"), 
+       col=c("blue", "pink"), lty=1:1, cex=0.8, box.lty = 0)
+```
